@@ -149,9 +149,9 @@ This is a demo project for educational purposes.
 UI
 ![UI](/demo/image.png)
 
-Order
-![Order](/demo/vokoscreenNG-2025-08-27_15-28-49.gif)
-
 Backend log
 
 ![Backendlog](/demo/log.png)
+
+Hyperliquid Integration (pls waiting to load GIF)
+![Integration](/demo/vokoscreenNG-2025-08-29_16-55-35.gif)

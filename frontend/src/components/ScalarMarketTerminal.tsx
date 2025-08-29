@@ -17,23 +17,37 @@ interface MarketData {
 }
 
 interface TradeRequest {
+  invested_amount: number;
   size: number;
   leverage: number;
-  entry_price: number;
-  scalar_value: number;
   direction: 'long' | 'short';
+  limit_px: number;
 }
 
 const ScalarMarketTerminal: React.FC = () => {
   const [marketData, setMarketData] = useState<MarketData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [orderId, setOrderId] = useState(null);
   const [tradeForm, setTradeForm] = useState<TradeRequest>({
+    invested_amount: 100,
     size: 100,
     leverage: 1,
-    entry_price: 0,
-    scalar_value: 0,
     direction: 'long',
+    limit_px: 0,
   });
+
+  // Automatically update size when invested_amount, leverage, or limit_px changes
+  useEffect(() => {
+    if (tradeForm.invested_amount > 0) {
+      const newSize =
+        (tradeForm.invested_amount * tradeForm.leverage) / tradeForm.limit_px;
+      setTradeForm((prev) => ({
+        ...prev,
+        size: Number.isFinite(newSize) ? parseFloat(newSize.toFixed(2)) : 0,
+      }));
+    }
+  }, [tradeForm.invested_amount, tradeForm.leverage, tradeForm.limit_px]);
+
   const [placingTrade, setPlacingTrade] = useState(false);
   const [tradeResult, setTradeResult] = useState<string>('');
   const [timeLeft, setTimeLeft] = useState<string>('');
@@ -70,8 +84,12 @@ const ScalarMarketTerminal: React.FC = () => {
       setMarketData(data);
       setTradeForm((prev) => ({
         ...prev,
-        entry_price: data.mark_price,
-        scalar_value: data.mark_price,
+        limit_px: parseFloat(
+          (prev.direction === 'long'
+            ? data.mark_price - data.range.tick_size
+            : data.mark_price + data.range.tick_size
+          ).toFixed(1)
+        ),
       }));
     } catch (error) {
       console.error('Error fetching market data:', error);
@@ -82,39 +100,81 @@ const ScalarMarketTerminal: React.FC = () => {
 
   const handleTradeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setPlacingTrade(true);
-    setTradeResult('');
+    if (orderId) {
+      // Cancel order logic here
+      try {
+        const response = await fetch(`/orders/${orderId}/cancel`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
 
-    try {
-      const response = await fetch('/orders/place', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(tradeForm),
-      });
+        const result = await response.json();
 
-      const result = await response.json();
-
-      if (response.ok) {
-        setTradeResult(
-          `Trade executed successfully! Order ID: ${result.order_id}`
-        );
+        if (response.ok) {
+          setTradeResult(`Order cancelled.`);
+          // Reset form
+          setTradeForm((prev) => ({
+            ...prev,
+            size: 100,
+            leverage: 1,
+            limit_px: marketData?.mark_price || 0,
+          }));
+        } else {
+          setTradeResult(`Error: ${result.detail}`);
+          // Reset form
+          setTradeForm((prev) => ({
+            ...prev,
+            size: 100,
+            leverage: 1,
+            limit_px: marketData?.mark_price || 0,
+          }));
+        }
+      } catch (error) {
+        setTradeResult('Error occurred. Please try again.');
         // Reset form
         setTradeForm((prev) => ({
           ...prev,
           size: 100,
           leverage: 1,
-          entry_price: marketData?.mark_price || 0,
-          scalar_value: marketData?.mark_price || 0,
+          limit_px: marketData?.mark_price || 0,
         }));
-      } else {
-        setTradeResult(`Error: ${result.detail}`);
+      } finally {
+        setOrderId(null);
+        setTradeResult('Order cancelled.');
       }
-    } catch (error) {
-      setTradeResult('Error executing trade. Please try again.');
-    } finally {
-      setPlacingTrade(false);
+    } else {
+      setPlacingTrade(true);
+      setTradeResult('');
+      try {
+        const response = await fetch('/orders/place', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(tradeForm),
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+          if (result.status === 'success') {
+            setOrderId(result.order_id);
+            setTradeResult(
+              `Trade executed successfully! Order ID: ${result.order_id}`
+            );
+          } else {
+            setTradeResult(`Error: ${result.error}`);
+          }
+        } else {
+          setTradeResult(`Error: ${result.detail}`);
+        }
+      } catch (error) {
+        setTradeResult('Error executing trade. Please try again.');
+      } finally {
+        setPlacingTrade(false);
+      }
     }
   };
 
@@ -196,7 +256,7 @@ const ScalarMarketTerminal: React.FC = () => {
           <div className="detail-item">
             <label>Range</label>
             <span>
-              {marketData.range.min}% - {marketData.range.max}%
+              ${marketData.range.min} - ${marketData.range.max}
             </span>
           </div>
           <div className="detail-item">
@@ -208,43 +268,6 @@ const ScalarMarketTerminal: React.FC = () => {
           <div className="detail-item">
             <label>Tick Size</label>
             <span>{marketData.range.tick_size}</span>
-          </div>
-        </div>
-
-        <div className="scalar-chart">
-          <div className="chart-line">
-            <div className="min-value">{marketData.range.min}%</div>
-            <div className="chart-bar">
-              <div
-                className="mark-indicator"
-                style={{
-                  left: `${
-                    ((marketData.mark_price - marketData.range.min) /
-                      (marketData.range.max - marketData.range.min)) *
-                    100
-                  }%`,
-                }}
-              >
-                <div className="mark-label">
-                  Market: {marketData.mark_price}%
-                </div>
-              </div>
-              <div
-                className="oracle-indicator"
-                style={{
-                  left: `${
-                    ((marketData.oracle_price - marketData.range.min) /
-                      (marketData.range.max - marketData.range.min)) *
-                    100
-                  }%`,
-                }}
-              >
-                <div className="oracle-label">
-                  Oracle: {marketData.oracle_price}%
-                </div>
-              </div>
-            </div>
-            <div className="max-value">{marketData.range.max}%</div>
           </div>
         </div>
       </div>
@@ -281,13 +304,14 @@ const ScalarMarketTerminal: React.FC = () => {
           </div>
 
           <div className="form-group">
-            <label>Investment Amount (USD)</label>
+            <label>Investment (USD)</label>
             <input
               type="number"
-              value={tradeForm.size}
+              value={tradeForm.invested_amount}
               onChange={(e) =>
                 setTradeForm((prev) => ({
                   ...prev,
+                  invested_amount: parseFloat(e.target.value),
                   size: parseFloat(e.target.value) || 0,
                 }))
               }
@@ -315,36 +339,21 @@ const ScalarMarketTerminal: React.FC = () => {
           </div>
 
           <div className="form-group">
-            <label>Entry Price</label>
-            <input
-              type="number"
-              value={tradeForm.entry_price}
-              onChange={(e) =>
-                setTradeForm((prev) => ({
-                  ...prev,
-                  entry_price: parseFloat(e.target.value) || 0,
-                }))
-              }
-              min={marketData.range.min}
-              max={marketData.range.max}
-              step={marketData.range.tick_size}
-            />
+            <label>Position Size (Contracts)</label>
+            <input type="number" value={tradeForm.size} readOnly={true} />
           </div>
 
           <div className="form-group">
-            <label>Target Value</label>
+            <label>Limit Price (USD)</label>
             <input
               type="number"
-              value={tradeForm.scalar_value}
+              value={tradeForm.limit_px}
               onChange={(e) =>
                 setTradeForm((prev) => ({
                   ...prev,
-                  scalar_value: parseFloat(e.target.value) || 0,
+                  limit_px: parseFloat(e.target.value) || 0,
                 }))
               }
-              min={marketData.range.min}
-              max={marketData.range.max}
-              step={marketData.range.tick_size}
             />
           </div>
 
@@ -353,7 +362,11 @@ const ScalarMarketTerminal: React.FC = () => {
             className="place-trade-btn"
             disabled={placingTrade}
           >
-            {placingTrade ? 'Executing...' : 'Execute Trade'}
+            {placingTrade
+              ? 'Submitting...'
+              : orderId
+              ? 'Cancel Order'
+              : 'Submit Order'}
           </button>
         </form>
 
